@@ -3,7 +3,7 @@ version: "3.9"
 services:
   scalesecret:
     build: .
-    image: scalesecret:${TAG}
+    image: scalesecret:latest
     container_name: scalesecret
     network_mode: host # or bridge or whatever your network is
     pull_policy: never
