@@ -1,0 +1,5 @@
+telethon
+apscheduler
+python-dotenv
+google-genai
+pydantic
