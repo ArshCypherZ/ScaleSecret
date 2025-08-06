@@ -3,21 +3,23 @@ version: "3.9"
 services:
   scalesecret:
     build: .
-    image: scalesecret:latest
+    image: scalesecret:{TAG}
     container_name: scalesecret
     network_mode: host # or bridge or whatever your network is
     pull_policy: never
     environment:
-      - API_ID=VALUE
-      - API_HASH=VALUE
-      - BOT_TOKEN=VALUE
-      - CHAT_ID=VALUE
-      - OWNER_ID=VALUE
-      - GEMINI_API_KEY=VALUE
+      - API_ID
+      - API_HASH
+      - BOT_TOKEN
+      - CHAT_ID
+      - OWNER_ID
+      - GEMINI_API_KEY
+
   restarter:
     image: docker:cli
     volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
-    command: ["/bin/sh", "-c", "while true; do sleep 180000; docker restart scalesecret; done"] # restart every 50 hours
+    # This command will restart the 'scalesecret' container every 50 hours.
+    command: ["/bin/sh", "-c", "while true; do sleep 180000; docker restart scalesecret; done"]
     restart: unless-stopped
     network_mode: host
 
