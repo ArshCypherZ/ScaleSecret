@@ -53,6 +53,25 @@ APPS = [
     'IRCTC', 'BookMyShow', 'Hotstar', 'JioCinema'
 ]
 
+# New: content lenses to diversify the angle of each post
+LENSES = [
+    'History and evolution',
+    'Core principles and algorithms',
+    'Design choices and architecture',
+    'Trade-offs and limitations',
+    'Privacy and security',
+    'Performance vs. cost',
+    'On-device vs. cloud computation',
+    'Edge cases and failure modes',
+    'User experience and accessibility',
+    'Energy efficiency and sustainability',
+    'Data governance and ethics',
+    'Open-source vs. proprietary approaches',
+    'Future trends and emerging research',
+    'Comparisons and analogies',
+    'Real-world applications and case studies'
+]
+
 TOPICS_FILE = "discussed_topics.json"
 DB_FILE = "topics.db"
 
@@ -154,25 +173,27 @@ async def is_topic_already_discussed(new_title, previous_topics):
     previous_topics_text = "\n".join([f"- {topic}" for topic in previous_topics])
     
     prompt = f"""
-You are an expert AI analyzing tech topics for similarity. Your goal is to avoid posting repetitive content, but allow for nuanced variations.
+You are an expert AI analyzing tech topics for similarity. Your goal is to avoid posting repetitive content while allowing nuanced variations and different analytical lenses.
 
-New topic: "{new_title}"
+New topic (may include an angle in brackets): "{new_title}"
 
-Previously discussed topics:
+Previously discussed topics (titles only):
 {previous_topics_text}
 
-Analyze if the new topic is substantially similar to any of the previously discussed topics.
+Analyze if the new topic is substantially similar to any of the previously discussed topics based on the core concept.
 
-Here's how to judge similarity:
-1.  **Core Concept is Identical**: If the underlying technical challenge is the same (e.g., both are about real-time messaging sync, or both are about payment fraud detection), they are likely similar.
-2.  **Domain Matters**: If the core concept is similar (e.g., recommendation engines) but the application domain is very different (e.g., music recommendations vs. e-commerce product recommendations), consider them **DIFFERENT**. The unique challenges of each domain make them interesting.
-3.  **Be Lenient**: When in doubt, lean towards "DIFFERENT" to allow for a wider variety of content.
+Guidelines for judging similarity:
+1. Core concept identical: If the underlying technical problem is the same (e.g., both about real-time messaging sync), treat as SIMILAR.
+2. Domain matters: Same concept in very different domains (e.g., music recommendations vs. e-commerce recommendations) are DIFFERENT.
+3. Lens matters: If the angle/lens is different (e.g., privacy implications vs. scaling architecture vs. design trade-offs) and leads to different insights, treat as DIFFERENT.
+4. Be lenient: When in doubt, lean towards DIFFERENT to enable variety.
 
 Examples:
-- "How Netflix streams videos" and "YouTube's video compression" are SIMILAR (both about video streaming).
-- "Spotify's music recommendations" and "Myntra's product recommendations" are DIFFERENT (different domains: music vs. e-commerce).
-- "Instagram's feed ranking" and "TikTok's 'For You' page algorithm" are SIMILAR (both are about content ranking algorithms in social media).
-- "How Google Maps calculates ETAs" and "Uber's driver dispatch algorithm" are DIFFERENT (related to location, but solve different core problems).
+- "How Netflix streams videos" and "YouTube's video compression" are SIMILAR (video streaming core).
+- "Spotify's music recommendations" and "Myntra's product recommendations" are DIFFERENT (domain shift).
+- "Instagram feed ranking" and "TikTok 'For You' ranking" are SIMILAR (content ranking in social).
+- "Google Maps ETA calculation" and "Uber driver dispatch" are DIFFERENT (different core problems).
+- "End-to-end encryption in WhatsApp [Angle: Privacy]" vs. "WhatsApp groups scaling [Angle: Scalability]" are DIFFERENT.
 
 Answer with only "YES" if the new topic is too similar and should be rejected, or "NO" if it's different enough to be interesting.
 """
@@ -221,17 +242,23 @@ async def generate_tech_fact() -> tuple[str, str, str]:
     
     while attempts < max_attempts:
         app = random.choice(available_apps)
+        lens = random.choice(LENSES)
         prompt = (
-            f"Your task is to explain a fascinating technical feature of a popular app. Pick an app like {app} or another well-known app that people use daily. "
-            "Avoid niche, B2B, or enterprise software (like Salesforce or obscure developer tools). Focus on apps with a massive user base. "
-            "1.  **Title**: Create an engaging question about a specific feature. Example: 'How does Shazam identify a song in seconds?' "
-            "2.  **Explanation**: Write a clear, story-like explanation for a curious developer. "
-            "   - Start with the user experience. "
-            "   - Explain the technical challenge (e.g., scale, speed, data). "
-            "   - Detail the solution: mention specific technologies, architecture (e.g., CDNs, microservices, caching layers), and clever algorithms. "
-            "   - Keep the explanation concise and to the point. **Strictly limit the explanation to under 2000 characters.** "
-            "The goal is to reveal the 'magic' behind a feature everyone uses. You can also answer in a coversational tone, like you're explaining it to a friend or an interviewer asking you questions."
-            "Return the output as a JSON object matching the TechFact schema, with fields for 'app_name', 'feature_title', and 'explanation'."
+            f"You are a Tech Fact Explorer. Pick an app like {app} or another widely used, consumer-facing app that people use daily. "
+            "Avoid niche B2B/enterprise tools. "
+            "Use the following angle to keep content fresh: " + lens + ". "
+            "Your job is to reveal a modern technology topic with depth and variety — not a scaling success story. "
+            "Strictly avoid centering the narrative on 'how they scaled to X users' or generic hyperscale war stories unless explicitly relevant to the chosen angle. "
+            "1. Title: Create an engaging, varied title (not always a 'How does...?' question). Allowed forms: question, surprising statement, comparison, myth-buster, 'Inside: ...', 'Trade-offs: ...', 'Why ... works', or 'The evolution of ...'. "
+            "2. Explanation: Under 2000 characters. Make it clear and educational for a curious developer. Cover multiple facets where appropriate, such as: "
+            "   - History/origins or evolution. "
+            "   - Core principles/algorithms and key design choices. "
+            "   - Trade-offs, limitations, or known challenges. "
+            "   - Real-world applications and usage. "
+            "   - Innovations and future trends. "
+            "   - Optional: brief analogies or comparisons to make it intuitive. "
+            "Focus on principles, applications, and reasoning. Mention specific technologies only when helpful (e.g., edge inference, CRDTs, Bloom filters, FEC, WebRTC, QUIC, on-device ML, privacy-preserving methods), not as a list of buzzwords. "
+            "Return the output as a JSON object matching the TechFact schema with fields 'app_name', 'feature_title', and 'explanation'."
         )
 
         try:
@@ -248,7 +275,8 @@ async def generate_tech_fact() -> tuple[str, str, str]:
             
             if response.parsed:
                 fact: TechFact = response.parsed
-                is_similar = await is_topic_already_discussed(fact.feature_title, previous_topics)
+                # Include lens in similarity check context so a different angle can pass
+                is_similar = await is_topic_already_discussed(f"{fact.feature_title} [Angle: {lens}]", previous_topics)
                 
                 if is_similar:
                     logging.info(f"Topic is similar to previous topics, generating new one. Attempt {attempts + 1}")

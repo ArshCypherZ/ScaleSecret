@@ -1,8 +1,8 @@
 # ScaleSecret Bot
 
-A Telegram bot that automatically posts engaging tech facts about popular apps and their engineering solutions every 24 hours written in telethon.
+A Telegram bot that automatically posts diverse, educational tech facts about modern apps and technologies every 24 hours (built with Telethon).
 
-Find live working version here at our [group chat](https://t.me/SpiralTechDivision).
+Find the live working version here in our [group chat](https://t.me/SpiralTechDivision).
 
 ## Setup
 
