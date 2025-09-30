@@ -519,7 +519,7 @@ async def main():
     migrate_json_to_db()
     await telethn.start(bot_token=BOT_TOKEN)
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(post_message, "interval", hours=0.01)
+    scheduler.add_job(post_message, "interval", hours=6)
     scheduler.start()
     logging.info("Botto started nyan nyan :3")
     await telethn.run_until_disconnected()
