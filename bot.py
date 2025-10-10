@@ -292,28 +292,33 @@ async def generate_tech_fact() -> tuple[str, str, str, str]:
             config1 = types.GenerateContentConfig(tools=tools)
 
             prompt1 = f"""
-You are a senior computer science professor, systems architect, and researcher.
-Your task is to propose one unique, technically rich, and non-obvious topic under:
+You are a computer science mentor and systems architect.
+Your task is to propose one unique, clear, and interesting topic under:
 
 - Category: {category}
 - Subcategory: {subcategory}
 
-Write a focused, self-contained, **article-style** piece that could be used as the "explanation" field later.
+The topic can be about:
+- a core CS or interview concept,
+- a real-world tech insight about one app from this list: {', '.join(random.sample(APPS, 6))},
+- a scalability, deployment, or ML engineering idea.
+
 Guidelines:
-1. Depth first — avoid shallow definitions or trivia. Surface design trade-offs, failure modes, hidden complexities, and implementation pitfalls.
-2. Research angle — include a brief history or evolution, note any recent innovations or open problems, and suggest future directions.
-3. System design perspective — explain practical engineering decisions, metrics to watch, and real-world failure scenarios. Use concrete examples and analogies when helpful.
-4. Comparative view — when relevant, contrast at least two approaches and explain why one might be chosen over another.
-5. Make it engaging: aim for multiple short paragraphs (at least 3-5), actionable insights, and one clear takeaway or "what to watch" note at the end.
-6. Do not output any JSON here — this step should be pure freeform text that will be restructured later into JSON.
-Style:
-- Write for advanced undergraduates or junior engineers: clear, precise, and approachable.
-- Aim for 200+ words (article-style). Be concrete and practical.
+1. Keep it technical but readable — avoid boring textbook explanations or research-heavy writing.
+2. Include depth or insight: how it works, why it matters, or what makes it tricky.
+3. Use at most one brief app reference if relevant.
+4. No long examples, lists, or tutorials.
+5. End with one takeaway or lesson.
+6. Output plain text only (no JSON or formatting).
+
+Audience: advanced CS students or engineers preparing for interviews or system design rounds.
+Length: about 180–250 words.
 Important:
 - Do NOT repeat any topic from the last {COOLDOWN_N} posts in this category or subcategory.
 - Output only the article text (no metadata, no JSON).
-- If you need to use a tool, do so naturally as part of your research process. Like google_search to find recent latest developments or verify facts.
+- If you need to use a tool, do so naturally as part of your process. Like google_search to find recent latest developments or verify facts.
 """
+
             response1 = client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=prompt1,
@@ -519,7 +524,7 @@ async def main():
     migrate_json_to_db()
     await telethn.start(bot_token=BOT_TOKEN)
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(post_message, "interval", hours=6)
+    scheduler.add_job(post_message, "interval", hours=12)
     scheduler.start()
     logging.info("Botto started nyan nyan :3")
     await telethn.run_until_disconnected()
