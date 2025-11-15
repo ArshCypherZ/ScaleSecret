@@ -292,31 +292,28 @@ async def generate_tech_fact() -> tuple[str, str, str, str]:
             config1 = types.GenerateContentConfig(tools=tools)
 
             prompt1 = f"""
-You are a computer science mentor and systems architect.
-Your task is to propose one unique, clear, and interesting topic under:
+You are a tech storyteller, like the author of the "Netflix Chaos Monkey" or "Google 'restarunt'" posts.
+Your task is to find one fascinating story or idea about:
 
 - Category: {category}
 - Subcategory: {subcategory}
 
-The topic can be about:
-- a core CS or interview concept,
-- a real-world tech insight about one app from this list: {', '.join(random.sample(APPS, 6))},
-- a scalability, deployment, or ML engineering idea.
+The topic could be about a core CS idea or a real-world story from an app like {', '.join(random.sample(APPS, 4))}.
 
-Guidelines:
-1. Keep it technical but readable — avoid boring textbook explanations or research-heavy writing.
-2. Include depth or insight: how it works, why it matters, or what makes it tricky.
-3. Use at most one brief app reference if relevant.
-4. No long examples, lists, or tutorials.
-5. End with one takeaway or lesson.
-6. Output plain text only (no JSON or formatting).
+**How to write it (This is crucial):**
+1.  **Start with a strong hook.** A relatable question ("Ever wondered...?") or a surprising fact ("Netflix once asked...").
+2.  **Tell a simple story.** Focus on the *problem* and the *clever solution*.
+3.  **Use simple analogies.** (e.g., "It was like keeping a giant notebook...").
+4.  **Avoid jargon.** Explain it for a smart friend, not a textbook. (e.g., "No deep learning. Just simple statistics.").
+5.  **End with a single, clear takeaway.** (e.g., "A tiny trick, a huge impact.").
 
-Audience: advanced CS students or engineers preparing for interviews or system design rounds.
-Length: about 180–250 words.
+Audience: A tech enthusiast or developer who wants to learn something cool.
+Length: about 150-200 words.
+
 Important:
-- Do NOT repeat any topic from the last {COOLDOWN_N} posts in this category or subcategory.
-- Output only the article text (no metadata, no JSON).
-- If you need to use a tool, do so naturally as part of your process. Like google_search to find recent latest developments or verify facts.
+- Do NOT repeat any topic from the last {COOLDOWN_N} posts.
+- Output ONLY the article text. No titles, no JSON, just the story.
+- Use your search tool if needed to find a real-world example or verify a fact.
 """
 
             response1 = client.models.generate_content(
@@ -356,7 +353,7 @@ Important:
             )
 
             response2 = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-2.5-pro",
                 contents=prompt2,
                 config=config2
             )
