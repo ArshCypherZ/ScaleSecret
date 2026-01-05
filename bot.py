@@ -24,10 +24,6 @@ CHAT_ID = int(os.getenv("CHAT_ID", 0))
 OWNER_ID = int(os.getenv("OWNER_ID", 0))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-if not all([API_ID, API_HASH, BOT_TOKEN, CHAT_ID, OWNER_ID, GEMINI_API_KEY]):
-    logging.error("Missing one or more required environment variables. Exiting.")
-    exit(1)
-
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 
@@ -74,6 +70,32 @@ LENSES = [
     'Real-world applications and case studies'
 ]
 
+WRITING_PRINCIPLES = """
+Core Principles:
+
+1. Assume smart, not technical. Reader has never studied CS. If you use a technical term, explain it immediately in parentheses.
+
+2. Titles must be curiosity-driven. No colons. No jargon. Would someone tap on this?
+
+3. Start with an app or experience they use daily.
+
+4. Every jargon word needs instant translation in parentheses.
+
+5. Max 15 words per sentence. Break long sentences.
+
+6. Mom test - would a non-technical person understand paragraph one?
+
+7. Be concrete. Describe what happens, not abstract concepts.
+
+8. End with a simple memorable insight.
+
+Banned:
+- Titles with colons
+- Unexplained jargon
+- Academic phrasing
+- Sentences over 20 words
+"""
+
 TOPICS_FILE = "discussed_topics.json"
 DB_FILE = "topics.db"
 
@@ -95,43 +117,6 @@ def init_database():
     conn.commit()
     conn.close()
     logging.info("Database initialized successfully.")
-
-
-def migrate_json_to_db():
-    """Migrate topics from the old JSON file to the new SQLite DB if it exists."""
-    if os.path.exists(TOPICS_FILE):
-        logging.info(f"Found {TOPICS_FILE}, migrating topics to SQLite database...")
-        try:
-            with open(TOPICS_FILE, 'r') as f:
-                topics = json.load(f)
-            conn = sqlite3.connect(DB_FILE)
-            cursor = conn.cursor()
-            for topic in topics:
-                cursor.execute(
-                    "INSERT OR IGNORE INTO discussed_topics (category, subcategory, title, explanation) VALUES (?, ?, ?, ?)",
-                    ("Legacy", "Legacy", topic, "Migrated from legacy JSON.")
-                )
-            conn.commit()
-            conn.close()
-            backup_filename = f"{TOPICS_FILE}.bak"
-            os.rename(TOPICS_FILE, backup_filename)
-            logging.info(f"Migration successful. Renamed {TOPICS_FILE} to {backup_filename}")
-        except Exception as e:
-            logging.error(f"Error migrating JSON to DB: {e}")
-
-
-def load_discussed_topics():
-    """Load previously discussed topics from the SQLite database."""
-    try:
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute("SELECT title FROM discussed_topics ORDER BY id DESC LIMIT 50")
-        topics = [row[0] for row in cursor.fetchall()]
-        conn.close()
-        return topics
-    except Exception as e:
-        logging.error(f"Error loading topics from database: {e}")
-        return []
 
 
 def add_discussed_topic(category, subcategory, title, explanation):
@@ -179,6 +164,23 @@ def get_all_discussed_topics():
         return topics
     except Exception as e:
         logging.error(f"Error loading all topics from database: {e}")
+        return []
+
+
+def get_recent_titles_for_dedup(n=30):
+    """Fetch the last N discussed topic titles to pass to LLM for deduplication."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT title FROM discussed_topics ORDER BY id DESC LIMIT ?",
+            (n,)
+        )
+        titles = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        return titles
+    except Exception as e:
+        logging.error(f"Error fetching recent titles for dedup: {e}")
         return []
 
 
@@ -253,8 +255,10 @@ def _clean_title(title: str) -> str | None:
 
 
 async def generate_tech_fact() -> tuple[str, str, str, str]:
+    """Generate a tech fact using principle-first reasoning and single-pass structured output."""
     try:
-        COOLDOWN_N = 10
+        COOLDOWN_N = 15
+        DEDUP_HISTORY = 30
 
         HIERARCHY = {
             "Computer Science Foundations": [
@@ -274,6 +278,7 @@ async def generate_tech_fact() -> tuple[str, str, str, str]:
             ]
         }
 
+        # Category/subcategory cooldown
         last_n = get_last_n_topics(COOLDOWN_N)
         recent_subcat = set((cat, subcat) for cat, subcat, _ in last_n)
         eligible_pairs = []
@@ -286,97 +291,86 @@ async def generate_tech_fact() -> tuple[str, str, str, str]:
             eligible_pairs = [(cat, subcat) for cat, subcats in HIERARCHY.items() for subcat in subcats]
 
         category, subcategory = random.choice(eligible_pairs)
+        
+        # Select a lens for variety
+        lens = random.choice(LENSES)
+        
+        # Sample apps for real-world context
+        sample_apps = random.sample(APPS, min(5, len(APPS)))
+        
+        # Get recent titles for explicit deduplication
+        recent_titles = get_recent_titles_for_dedup(DEDUP_HISTORY)
+        recent_titles_str = "\n".join([f"- {t}" for t in recent_titles]) if recent_titles else "(No previous topics yet)"
+
         try:
             from google.genai import types
-            tools = [{"google_search": {}}]
-            config1 = types.GenerateContentConfig(tools=tools)
+            
+            # Cannot use tools (google_search) with response_mime_type="application/json"
+            config = types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
 
-            prompt1 = f"""
-You are a tech storyteller, like the author of the "Netflix Chaos Monkey" or "Google 'restarunt'" posts.
-Your task is to find one fascinating story or idea about:
+            prompt = f"""
+You are a tech writer for curious people who are not CS graduates.
 
+{WRITING_PRINCIPLES}
+
+Write about:
 - Category: {category}
 - Subcategory: {subcategory}
+- Angle: {lens}
 
-The topic could be about a core CS idea or a real-world story from an app like {', '.join(random.sample(APPS, 4))}.
+You can reference apps like: {', '.join(sample_apps)}
 
-**How to write it (This is crucial):**
-1.  **Start with a strong hook.** A relatable question ("Ever wondered...?") or a surprising fact ("Netflix once asked...").
-2.  **Tell a simple story.** Focus on the *problem* and the *clever solution*.
-3.  **Use simple analogies.** (e.g., "It was like keeping a giant notebook...").
-4.  **Avoid jargon.** Explain it for a smart friend, not a textbook. (e.g., "No deep learning. Just simple statistics.").
-5.  **End with a single, clear takeaway.** (e.g., "A tiny trick, a huge impact.").
+Avoid these recent topics:
+{recent_titles_str}
 
-Audience: A tech enthusiast or developer who wants to learn something cool.
-Length: about 150-200 words.
+Output JSON:
+{{
+  "category": "{category}",
+  "subcategory": "{subcategory}",
+  "title": "curiosity-driven, no colons, no jargon",
+  "content": "150-200 words, short sentences, explain jargon in parentheses"
+}}
 
-Important:
-- Do NOT repeat any topic from the last {COOLDOWN_N} posts.
-- Output ONLY the article text. No titles, no JSON, just the story.
-- Use your search tool if needed to find a real-world example or verify a fact.
+Rules:
+1. IMPORTANT: Title and content must be about the SAME app or topic. Do not mix.
+2. No unexplained jargon - always add explanation in parentheses
+3. Max 15 words per sentence
+4. Start with something relatable
+5. Title has no colon, sounds like a YouTube video someone would click
+6. Last sentence under 10 words
 """
 
-            response1 = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt1,
-                config=config1
+            response = client.models.generate_content(
+                model="gemini-flash-latest",
+                contents=prompt,
+                config=config
             )
-            raw_text = response1.text if hasattr(response1, "text") else str(response1)
-            logging.info(f"Gemini step 1 (freeform) text preview: {raw_text[:200]}...")
-        except Exception as e:
-            logging.error(f"Gemini step 1 error: {e}")
-            return (category, subcategory, "Generation Failed", "Could not generate unique content.")
-
-        try:
-            from google.genai import types
-            config2 = types.GenerateContentConfig(response_mime_type="application/json")
-            prompt2 = (
-                "Given the following freeform article text, extract and frame a unique, valuable topic as a structured JSON object "
-                "with these fields: category, subcategory, title, explanation.\n\n"
-                f"Category: {category}\n"
-                f"Subcategory: {subcategory}\n\n"
-                "Freeform text:\n\n"
-                f"{raw_text}\n\n"
-                "Requirements for the JSON:\n"
-                "- category: same as above\n"
-                "- subcategory: same as above\n"
-                "- title: a clean, catchy, but precise title suitable for a Telegram post (max ~100 characters).\n"
-                "- explanation: article-style explanation suitable for posting in Telegram. Keep it detailed (200+ words), "
-                "use short paragraphs, and avoid including any extra JSON or metadata inside this string.\n\n"
-                "Output ONLY a single JSON object (no surrounding commentary). Example format:\n"
-                '{\n'
-                '  "category": "System Design & Development",\n'
-                '  "subcategory": "APIs",\n'
-                '  "title": "REST vs. gRPC: Choosing the Right API Protocol",\n'
-                '  "explanation": "A deep dive into REST and gRPC, their trade-offs, performance, and use cases."\n'
-                '}\n'
-            )
-
-            response2 = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt2,
-                config=config2
-            )
-            resp_text2 = response2.text if hasattr(response2, "text") else str(response2)
-            logging.info(f"Gemini step 2 (structuring) preview: {resp_text2[:200]}...")
+            resp_text = response.text if hasattr(response, "text") else str(response)
+            logging.info(f"Gemini response preview: {resp_text[:300]}...")
+            
+            # Parse JSON response
             try:
-                topic_json = json.loads(resp_text2)
-                for field in ["category", "subcategory", "title", "explanation"]:
+                topic_json = json.loads(resp_text)
+                for field in ["category", "subcategory", "title", "content"]:
                     if field not in topic_json:
                         raise ValueError(f"Missing field: {field}")
             except Exception as e:
-                logging.error(f"Error parsing Gemini JSON (step 2): {e}")
-                return (category, subcategory, "API Parsing Failed", resp_text2 if resp_text2 else "No response text")
+                logging.error(f"Error parsing Gemini JSON: {e}")
+                return (category, subcategory, "API Parsing Failed", resp_text if resp_text else "No response text")
+            
             raw_title = topic_json.get("title", "")
-            raw_explanation = topic_json.get("explanation", "")
+            raw_content = topic_json.get("content", "")
 
             title = _clean_title(raw_title)
-            explanation = _clean_explanation(raw_explanation)
+            explanation = _clean_explanation(raw_content)
 
             if not title or not explanation or _looks_like_json(title) or _looks_like_json(explanation):
                 logging.warning("Parsed content looks invalid or JSON-like after sanitization.")
-                return (category, subcategory, "API Parsing Failed", resp_text2)
+                return (category, subcategory, "API Parsing Failed", resp_text)
 
+            # Save to database
             add_discussed_topic(
                 topic_json.get("category", category),
                 topic_json.get("subcategory", subcategory),
@@ -390,9 +384,11 @@ Important:
                 title,
                 explanation
             )
+            
         except Exception as e:
-            logging.error(f"Gemini step 2 error: {e}")
-            return (category, subcategory, "Generation Failed", "Could not generate unique content.")
+            logging.error(f"Gemini generation error: {e}")
+            return (category, subcategory, "Generation Failed", f"Could not generate content: {str(e)}")
+            
     except Exception as e:
         logging.error(f"generate_tech_fact: Unhandled exception: {e}", exc_info=True)
         raise
@@ -518,7 +514,6 @@ async def clear_topics(event):
 async def main():
     logging.info("Starting botto...please waito..")
     init_database()
-    migrate_json_to_db()
     await telethn.start(bot_token=BOT_TOKEN)
     scheduler = AsyncIOScheduler()
     scheduler.add_job(post_message, "interval", hours=12)
