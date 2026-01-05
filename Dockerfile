@@ -1,8 +1,12 @@
-FROM python:3.10-slim-buster
+FROM python:3.10-slim-bookworm
 
 WORKDIR /app
 
-RUN apt-get -y update && apt-get -y install git gcc python3-dev
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    gcc \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt requirements.txt
 
