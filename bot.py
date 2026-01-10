@@ -71,29 +71,15 @@ LENSES = [
 ]
 
 WRITING_PRINCIPLES = """
-Core Principles:
+You explain HOW technology works, not WHAT it does.
 
-1. Assume smart, not technical. Reader has never studied CS. If you use a technical term, explain it immediately in parentheses.
+Focus on the architecture, algorithm, or system design behind the feature.
+Think: What happens under the hood? What data structures? What trade-offs?
 
-2. Titles must be curiosity-driven. No colons. No jargon. Would someone tap on this?
+Write for curious non-engineers. If you use a technical term, explain it immediately in parentheses.
 
-3. Start with an app or experience they use daily.
-
-4. Every jargon word needs instant translation in parentheses.
-
-5. Max 15 words per sentence. Break long sentences.
-
-6. Mom test - would a non-technical person understand paragraph one?
-
-7. Be concrete. Describe what happens, not abstract concepts.
-
-8. End with a simple memorable insight.
-
-Banned:
-- Titles with colons
-- Unexplained jargon
-- Academic phrasing
-- Sentences over 20 words
+Short sentences. Max 15 words each.
+End with a memorable one-line insight.
 """
 
 TOPICS_FILE = "discussed_topics.json"
@@ -109,24 +95,29 @@ def init_database():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             category TEXT NOT NULL,
             subcategory TEXT NOT NULL,
+            app_name TEXT,
             title TEXT NOT NULL UNIQUE,
             explanation TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    try:
+        cursor.execute("ALTER TABLE discussed_topics ADD COLUMN app_name TEXT")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
     conn.commit()
     conn.close()
     logging.info("Database initialized successfully.")
 
 
-def add_discussed_topic(category, subcategory, title, explanation):
+def add_discussed_topic(category, subcategory, title, explanation, app_name=None):
     """Save a new discussed topic to the database with hierarchy."""
     try:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO discussed_topics (category, subcategory, title, explanation) VALUES (?, ?, ?, ?)",
-            (category, subcategory, title, explanation)
+            "INSERT INTO discussed_topics (category, subcategory, app_name, title, explanation) VALUES (?, ?, ?, ?, ?)",
+            (category, subcategory, app_name, title, explanation)
         )
         conn.commit()
         conn.close()
@@ -134,6 +125,23 @@ def add_discussed_topic(category, subcategory, title, explanation):
         logging.warning(f"Attempted to add a duplicate topic, which was ignored: {title}")
     except Exception as e:
         logging.error(f"Error saving topic to database: {e}")
+
+
+def get_recently_used_apps(n=20):
+    """Fetch the last N apps that were discussed to enforce cooldown."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT app_name FROM discussed_topics WHERE app_name IS NOT NULL ORDER BY id DESC LIMIT ?",
+            (n,)
+        )
+        apps = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        return apps
+    except Exception as e:
+        logging.error(f"Error fetching recently used apps: {e}")
+        return []
 
 
 def get_last_n_topics(n=10):
@@ -254,10 +262,11 @@ def _clean_title(title: str) -> str | None:
     return t
 
 
-async def generate_tech_fact() -> tuple[str, str, str, str]:
-    """Generate a tech fact using principle-first reasoning and single-pass structured output."""
+async def generate_tech_fact() -> tuple[str, str, str, str, str]:
+    """Generate a tech fact focusing on technical architecture and implementation."""
     try:
         COOLDOWN_N = 15
+        APP_COOLDOWN = 20
         DEDUP_HISTORY = 30
 
         HIERARCHY = {
@@ -292,58 +301,56 @@ async def generate_tech_fact() -> tuple[str, str, str, str]:
 
         category, subcategory = random.choice(eligible_pairs)
         
+        # App cooldown - use ALL apps with rotation
+        recently_used_apps = set(get_recently_used_apps(APP_COOLDOWN))
+        eligible_apps = [app for app in APPS if app not in recently_used_apps]
+        if not eligible_apps:
+            eligible_apps = APPS.copy()
+        selected_app = random.choice(eligible_apps)
+        
         # Select a lens for variety
         lens = random.choice(LENSES)
         
-        # Sample apps for real-world context
-        sample_apps = random.sample(APPS, min(5, len(APPS)))
-        
         # Get recent titles for explicit deduplication
         recent_titles = get_recent_titles_for_dedup(DEDUP_HISTORY)
-        recent_titles_str = "\n".join([f"- {t}" for t in recent_titles]) if recent_titles else "(No previous topics yet)"
+        recent_titles_str = "\n".join([f"- {t}" for t in recent_titles]) if recent_titles else "(none)"
 
         try:
             from google.genai import types
             
-            # Cannot use tools (google_search) with response_mime_type="application/json"
             config = types.GenerateContentConfig(
                 response_mime_type="application/json"
             )
 
             prompt = f"""
-You are a tech writer for curious people who are not CS graduates.
-
 {WRITING_PRINCIPLES}
 
-Write about:
-- Category: {category}
-- Subcategory: {subcategory}
-- Angle: {lens}
+Your task: Pick a specific feature of {selected_app} and explain the TECHNICAL IMPLEMENTATION behind it.
 
-You can reference apps like: {', '.join(sample_apps)}
+Domain: {category} > {subcategory}
+Perspective: {lens}
 
-Avoid these recent topics:
+Think step by step:
+1. What is an interesting feature of {selected_app} that users interact with?
+2. What is the underlying technology, algorithm, or architecture that makes it work?
+3. How would you explain this to someone smart but non-technical?
+
+DO NOT describe what the feature does for users.
+DO explain how it is built, what happens on the server/client, what data structures or algorithms are involved.
+
+Avoid repeating these recent topics:
 {recent_titles_str}
 
 Output JSON:
 {{
-  "category": "{category}",
-  "subcategory": "{subcategory}",
-  "title": "curiosity-driven, no colons, no jargon",
-  "content": "150-200 words, short sentences, explain jargon in parentheses"
+  "app_name": "{selected_app}",
+  "title": "<curiosity-driven question or statement, no colons>",
+  "content": "<200-300 words explaining the technical implementation>"
 }}
-
-Rules:
-1. IMPORTANT: Title and content must be about the SAME app or topic. Do not mix.
-2. No unexplained jargon - always add explanation in parentheses
-3. Max 15 words per sentence
-4. Start with something relatable
-5. Title has no colon, sounds like a YouTube video someone would click
-6. Last sentence under 10 words
 """
 
             response = client.models.generate_content(
-                model="gemini-flash-latest",
+                model="gemini-2.0-flash",
                 contents=prompt,
                 config=config
             )
@@ -353,41 +360,44 @@ Rules:
             # Parse JSON response
             try:
                 topic_json = json.loads(resp_text)
-                for field in ["category", "subcategory", "title", "content"]:
+                for field in ["app_name", "title", "content"]:
                     if field not in topic_json:
                         raise ValueError(f"Missing field: {field}")
             except Exception as e:
                 logging.error(f"Error parsing Gemini JSON: {e}")
-                return (category, subcategory, "API Parsing Failed", resp_text if resp_text else "No response text")
+                return (category, subcategory, selected_app, "API Parsing Failed", resp_text if resp_text else "No response text")
             
             raw_title = topic_json.get("title", "")
             raw_content = topic_json.get("content", "")
+            app_name = topic_json.get("app_name", selected_app)
 
             title = _clean_title(raw_title)
             explanation = _clean_explanation(raw_content)
 
             if not title or not explanation or _looks_like_json(title) or _looks_like_json(explanation):
                 logging.warning("Parsed content looks invalid or JSON-like after sanitization.")
-                return (category, subcategory, "API Parsing Failed", resp_text)
+                return (category, subcategory, selected_app, "API Parsing Failed", resp_text)
 
-            # Save to database
+            # Save to database with app tracking
             add_discussed_topic(
-                topic_json.get("category", category),
-                topic_json.get("subcategory", subcategory),
+                category,
+                subcategory,
                 title,
-                explanation
+                explanation,
+                app_name=app_name
             )
 
             return (
-                topic_json.get("category", category),
-                topic_json.get("subcategory", subcategory),
+                category,
+                subcategory,
+                app_name,
                 title,
                 explanation
             )
             
         except Exception as e:
             logging.error(f"Gemini generation error: {e}")
-            return (category, subcategory, "Generation Failed", f"Could not generate content: {str(e)}")
+            return (category, subcategory, selected_app, "Generation Failed", f"Could not generate content: {str(e)}")
             
     except Exception as e:
         logging.error(f"generate_tech_fact: Unhandled exception: {e}", exc_info=True)
@@ -399,12 +409,12 @@ post_lock = asyncio.Lock()
 
 
 async def post_message():
-    category, subcategory, title, explanation = await generate_tech_fact()
+    category, subcategory, app_name, title, explanation = await generate_tech_fact()
     if title in ("API Parsing Failed", "Generation Failed"):
         try:
             await telethn.send_message(OWNER_ID, (
                 f"Topic generation failed.\n"
-                f"Category: {category}\nSubcategory: {subcategory}\nTitle: {title}\nExplanation: {explanation}"
+                f"Category: {category}\nSubcategory: {subcategory}\nApp: {app_name}\nTitle: {title}\nExplanation: {explanation}"
             ))
             logging.warning("Generation failed or fallback used. Not posting to channel.")
         except Exception as e:
@@ -449,7 +459,7 @@ async def post_message():
             post_text,
             parse_mode="html"
         )
-        logging.info(f"Posted: {category} - {subcategory} - {safe_title}")
+        logging.info(f"Posted: {app_name} ({category} > {subcategory}) - {safe_title}")
     except Exception as e:
         logging.error(f"Failed to send message: {e}")
         try:
